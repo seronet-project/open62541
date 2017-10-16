@@ -3,12 +3,6 @@
 
 #include <stdio.h>
 #include "open62541.h"
-#ifdef WIN32
-	#include <Windows.h> //Sleep
-#define sleep(timeMS) Sleep(timeMS)
-#else
-	#include <unistd.h>
-#endif // WIN32
 
 
 static
@@ -21,17 +15,6 @@ void valueRead(UA_Client *client, void *userdata,
                                  UA_UInt32 requestId, const void *response){
 
     printf("value Read \n");
-}
-static UA_StatusCode
-nodeIter(UA_NodeId childId, UA_Boolean isInverse, UA_NodeId referenceTypeId, void *handle) {
-    if(isInverse)
-        return UA_STATUSCODE_GOOD;
-    UA_NodeId *parent = (UA_NodeId *)handle;
-    printf("%d, %d --- %d ---> NodeId %d, %d\n",
-           parent->namespaceIndex, parent->identifier.numeric,
-           referenceTypeId.identifier.numeric, childId.namespaceIndex,
-           childId.identifier.numeric);
-    return UA_STATUSCODE_GOOD;
 }
 
 #define OPCUA_SERVER_URI "opc.tcp://vmc-a16:4840"
@@ -101,7 +84,7 @@ int main(int argc, char *argv[]) {
 		UA_Client_runAsync(client, 10);
 
         //UA_Client_run_iterate(client,10);
-        sleep(10);
+        //sleep_ms(10);
     }
 
     UA_Client_disconnect(client);
