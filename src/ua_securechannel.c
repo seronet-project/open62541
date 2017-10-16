@@ -525,7 +525,7 @@ sendChunkSymmetric(UA_ChunkInfo* ci, UA_Byte **buf_pos, const UA_Byte **buf_end)
 
     /* Send the chunk, the buffer is freed in the network layer */
     ci->messageBuffer.length = respHeader.messageHeader.messageSize;
-    connection->send(channel->connection, &ci->messageBuffer);
+    ci->errorCode = connection->send(channel->connection, &ci->messageBuffer);
 
     /* Replace with the buffer for the next chunk */
     if(!ci->final && ci->errorCode == UA_STATUSCODE_GOOD) {
