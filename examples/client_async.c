@@ -10,10 +10,7 @@
 	#include <unistd.h>
 #endif // WIN32
 
-static void
-handler_TheAnswerChanged(UA_UInt32 monId, UA_DataValue *value, void *context) {
-    printf("The Answer has changed!\n");
-}
+
 static
 void valueWritten(UA_Client *client, void *userdata,
                                  UA_UInt32 requestId, const void *response){
@@ -68,7 +65,7 @@ int main(int argc, char *argv[]) {
         return (int)retval;
     }
     UA_String sValue;
-    sValue.data = malloc(90000);
+    sValue.data = (UA_Byte*) malloc(90000);
     memset(sValue.data,'a',90000);
     sValue.length = 90000;
 
@@ -91,14 +88,14 @@ int main(int argc, char *argv[]) {
     rReq.nodesToRead[0].nodeId = UA_NODEID_NUMERIC(1, 51034);
     rReq.nodesToRead[0].attributeId = UA_ATTRIBUTEID_VALUE;
 
-    size_t reqId;
+    UA_UInt32 reqId;
 	UA_StatusCode retVal;
     while(true){
 
 		retVal = __UA_Client_AsyncService(client, (void*)&wReq, &UA_TYPES[UA_TYPES_WRITEREQUEST], valueWritten, &UA_TYPES[UA_TYPES_WRITERESPONSE], NULL, &reqId);
-		printf("Write ReqID: %d; RetVal: %d\n", reqId, retVal);
+		printf("Write ReqID: %u; RetVal: %u\n", reqId, retVal);
 		__UA_Client_AsyncService(client, (void*)&rReq, &UA_TYPES[UA_TYPES_READREQUEST], valueRead, &UA_TYPES[UA_TYPES_READRESPONSE], NULL, &reqId);
-		printf("Read ReqID: %d; RetVal: %d\n", reqId, retVal);
+		printf("Read ReqID: %u; RetVal: %u\n", reqId, retVal);
         //UA_Client_addAsyncRequest(client,(void*)&wReq, &UA_TYPES[UA_TYPES_WRITEREQUEST], valueWritten, &UA_TYPES[UA_TYPES_WRITERESPONSE], NULL, &reqId);
         //UA_Client_addAsyncRequest(client,(void*)&rReq, &UA_TYPES[UA_TYPES_READREQUEST], valueRead, &UA_TYPES[UA_TYPES_READRESPONSE], NULL, &reqId);
 		UA_Client_runAsync(client, 10);
