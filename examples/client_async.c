@@ -17,7 +17,7 @@ void valueRead(UA_Client *client, void *userdata,
     printf("value Read \n");
 }
 
-#define OPCUA_SERVER_URI "opc.tcp://vmc-a16:4840"
+#define OPCUA_SERVER_URI "opc.tcp://localhost:4840"
 
 int main(int argc, char *argv[]) {
     UA_Client *client = UA_Client_new(UA_ClientConfig_default);
@@ -76,15 +76,11 @@ int main(int argc, char *argv[]) {
     while(true){
 
 		retVal = __UA_Client_AsyncService(client, (void*)&wReq, &UA_TYPES[UA_TYPES_WRITEREQUEST], valueWritten, &UA_TYPES[UA_TYPES_WRITERESPONSE], NULL, &reqId);
-		printf("Write ReqID: %u; RetVal: %u\n", reqId, retVal);
-		__UA_Client_AsyncService(client, (void*)&rReq, &UA_TYPES[UA_TYPES_READREQUEST], valueRead, &UA_TYPES[UA_TYPES_READRESPONSE], NULL, &reqId);
-		printf("Read ReqID: %u; RetVal: %u\n", reqId, retVal);
-        //UA_Client_addAsyncRequest(client,(void*)&wReq, &UA_TYPES[UA_TYPES_WRITEREQUEST], valueWritten, &UA_TYPES[UA_TYPES_WRITERESPONSE], NULL, &reqId);
-        //UA_Client_addAsyncRequest(client,(void*)&rReq, &UA_TYPES[UA_TYPES_READREQUEST], valueRead, &UA_TYPES[UA_TYPES_READRESPONSE], NULL, &reqId);
-		UA_Client_runAsync(client, 10);
-
-        //UA_Client_run_iterate(client,10);
-        //sleep_ms(10);
+		retVal = __UA_Client_AsyncService(client, (void*)&rReq, &UA_TYPES[UA_TYPES_READREQUEST], valueRead, &UA_TYPES[UA_TYPES_READRESPONSE], NULL, &reqId);
+		
+		UA_Client_runAsync(client, 5);
+		UA_Client_runAsync(client, 5);
+		//TODO sleep
     }
 
     UA_Client_disconnect(client);
