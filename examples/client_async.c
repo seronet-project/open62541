@@ -17,6 +17,13 @@ void valueRead(UA_Client *client, void *userdata,
     printf("value Read \n");
 }
 
+
+static
+void methodCalled(UA_Client *client, void *userdata,
+	UA_UInt32 requestId, const void *response) {
+	printf("Method Called \n");
+}
+
 #define OPCUA_SERVER_URI "opc.tcp://localhost:4840"
 
 int main(int argc, char *argv[]) {
@@ -53,7 +60,9 @@ int main(int argc, char *argv[]) {
     sValue.length = 90000;
 
     printf("\nWriting a value of node (1, \"the.answer\"):\n");
-    UA_WriteRequest wReq;
+    
+	//Construct write request
+	UA_WriteRequest wReq;
     UA_WriteRequest_init(&wReq);
     wReq.nodesToWrite = UA_WriteValue_new();
     wReq.nodesToWriteSize = 1;
@@ -64,6 +73,7 @@ int main(int argc, char *argv[]) {
     wReq.nodesToWrite[0].value.value.storageType = UA_VARIANT_DATA_NODELETE; /* do not free the integer on deletion */
     wReq.nodesToWrite[0].value.value.data = &sValue;
 
+	//Construct read request
     UA_ReadRequest rReq;
     UA_ReadRequest_init(&rReq);
     rReq.nodesToRead = UA_ReadValueId_new();
@@ -71,15 +81,36 @@ int main(int argc, char *argv[]) {
     rReq.nodesToRead[0].nodeId = UA_NODEID_NUMERIC(1, 51034);
     rReq.nodesToRead[0].attributeId = UA_ATTRIBUTEID_VALUE;
 
+	// Construct call request
+	UA_CallRequest callRequ;
+	UA_CallRequest_init(&callRequ);
+
+	UA_CallMethodRequest methodRequest;
+	UA_CallMethodRequest_init(&methodRequest);
+	methodRequest.objectId = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
+	methodRequest.methodId = UA_NODEID_NUMERIC(1, 62541);
+	UA_Variant input;
+	UA_String argString = UA_STRING("input_Argument");
+	UA_Variant_init(&input);
+	UA_Variant_setScalarCopy(&input, &argString, &UA_TYPES[UA_TYPES_STRING]);
+	methodRequest.inputArguments = &input;
+	methodRequest.inputArgumentsSize = 1;
+
+	callRequ.methodsToCall = &methodRequest;
+	callRequ.methodsToCallSize = 1;
+
+
     UA_UInt32 reqId;
 	UA_StatusCode retVal;
     while(true){
-
-		retVal = __UA_Client_AsyncService(client, (void*)&wReq, &UA_TYPES[UA_TYPES_WRITEREQUEST], valueWritten, &UA_TYPES[UA_TYPES_WRITERESPONSE], NULL, &reqId);
-		retVal = __UA_Client_AsyncService(client, (void*)&rReq, &UA_TYPES[UA_TYPES_READREQUEST], valueRead, &UA_TYPES[UA_TYPES_READRESPONSE], NULL, &reqId);
-		
-		UA_Client_runAsync(client, 5);
-		UA_Client_runAsync(client, 5);
+		printf("Send Requests \n");
+		retVal = UA_Client_AsyncService_write(client, wReq, valueWritten, NULL, &reqId);
+		retVal = UA_Client_AsyncService_read(client, rReq, valueRead, NULL, &reqId);
+		retVal = UA_Client_AsyncService_call(client, callRequ, methodCalled, NULL, &reqId);
+		printf("Requests Send \n");
+		UA_Client_runAsync(client, 500);
+		UA_Client_runAsync(client, 500);
+		UA_Client_runAsync(client, 500);
 		//TODO sleep
     }
 

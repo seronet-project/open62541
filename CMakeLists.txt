@@ -60,6 +60,7 @@ option(UA_ENABLE_DISCOVERY_SEMAPHORE "Enable Discovery Semaphore support" ON)
 mark_as_advanced(UA_ENABLE_DISCOVERY_SEMAPHORE)
 option(UA_ENABLE_AMALGAMATION "Concatenate the library to a single file open62541.h/.c" OFF)
 option(UA_ENABLE_COVERAGE "Enable gcov coverage" OFF)
+option(UA_ENABLE_ASYNC_CLIENT_API "Enable API of async client" ON)
 option(BUILD_SHARED_LIBS "Enable building of shared libraries (dll/so)" OFF)
 
 if(UA_ENABLE_COVERAGE)
@@ -265,6 +266,7 @@ set(exported_headers ${PROJECT_BINARY_DIR}/src_generated/ua_config.h
                      ${PROJECT_SOURCE_DIR}/include/ua_plugin_nodestore.h
                      ${PROJECT_SOURCE_DIR}/include/ua_server_config.h
                      ${PROJECT_SOURCE_DIR}/include/ua_client.h
+					 ${PROJECT_SOURCE_DIR}/include/ua_client_async.h
                      ${PROJECT_SOURCE_DIR}/include/ua_client_highlevel.h
 )
 set(internal_headers ${PROJECT_SOURCE_DIR}/deps/queue.h
@@ -323,6 +325,7 @@ set(lib_sources ${PROJECT_SOURCE_DIR}/src/ua_types.c
                 ${PROJECT_SOURCE_DIR}/src/server/ua_services_discovery_multicast.c
                 # client
                 ${PROJECT_SOURCE_DIR}/src/client/ua_client.c
+				${PROJECT_SOURCE_DIR}/src/client/ua_client_async.c
                 ${PROJECT_SOURCE_DIR}/src/client/ua_client_connect.c
                 ${PROJECT_SOURCE_DIR}/src/client/ua_client_discovery.c
                 ${PROJECT_SOURCE_DIR}/src/client/ua_client_highlevel.c
