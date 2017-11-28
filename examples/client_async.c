@@ -27,7 +27,9 @@ void methodCalled(UA_Client *client, void *userdata,
 #define OPCUA_SERVER_URI "opc.tcp://localhost:4840"
 
 int main(int argc, char *argv[]) {
-    UA_Client *client = UA_Client_new(UA_ClientConfig_default);
+	UA_ClientConfig clientConfig = UA_ClientConfig_default;
+	clientConfig.localConnectionConfig.useBlockingSocket = UA_FALSE;
+    UA_Client *client = UA_Client_new(clientConfig);
 	UA_StatusCode retval;
     /* Connect to a server */
     /* anonymous connect would be: retval = UA_Client_connect(client, OPCUA_SERVER_URI); */

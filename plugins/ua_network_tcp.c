@@ -788,13 +788,13 @@ UA_ClientConnectionTCP(UA_ConnectionConfig conf,
     }
 
 
-    ///* We are connected. Reset socket to blocking */
-    //if(socket_set_blocking(clientsockfd) != UA_STATUSCODE_GOOD) {
-    //    UA_LOG_WARNING(UA_Log_Stdout, UA_LOGCATEGORY_NETWORK,
-    //                   "Could not set the client socket to blocking");
-    //    ClientNetworkLayerTCP_close(&connection);
-    //    return connection;
-    //}
+    /* We are connected. Reset socket to blocking if .useBlockingSocket is set */
+    if(conf.useBlockingSocket && socket_set_blocking(clientsockfd) != UA_STATUSCODE_GOOD) {
+        UA_LOG_WARNING(UA_Log_Stdout, UA_LOGCATEGORY_NETWORK,
+                       "Could not set the client socket to blocking");
+        ClientNetworkLayerTCP_close(&connection);
+        return connection;
+    }
 
 #ifdef SO_NOSIGPIPE
     int val = 1;
