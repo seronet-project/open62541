@@ -180,6 +180,14 @@ processServiceResponse(void *application, UA_SecureChannel *channel,
         return UA_STATUSCODE_BADTCPMESSAGETYPEINVALID;
     }
 
+    /* Has the SecureChannel timed out?
+     * TODO: Solve this for client and server together */
+    if(rd->client->state >= UA_CLIENTSTATE_SECURECHANNEL &&
+       (channel->securityToken.createdAt +
+        (channel->securityToken.revisedLifetime * UA_DATETIME_MSEC))
+       < UA_DateTime_nowMonotonic())
+        return UA_STATUSCODE_BADSECURECHANNELCLOSED;
+
     /* Forward declaration for the goto */
     UA_NodeId expectedNodeId;
     const UA_NodeId serviceFaultNodeId =
@@ -224,8 +232,6 @@ processServiceResponse(void *application, UA_SecureChannel *channel,
 
 
 finish:
-    UA_NodeId_deleteMembers(&responseId);
-
     if(retval == UA_STATUSCODE_GOOD) {
         UA_LOG_DEBUG(rd->client->config.logger, UA_LOGCATEGORY_CLIENT,
                      "Received a response of type %i", responseId.identifier.numeric);
@@ -235,9 +241,14 @@ finish:
         UA_LOG_INFO(rd->client->config.logger, UA_LOGCATEGORY_CLIENT,
                     "Error receiving the response with status code %s",
                     UA_StatusCode_name(retval));
-        UA_ResponseHeader *respHeader = (UA_ResponseHeader*)rd->response;
-        respHeader->serviceResult = retval;
+
+        if(rd->response) {
+            UA_ResponseHeader *respHeader = (UA_ResponseHeader*)rd->response;
+            respHeader->serviceResult = retval;
+        }
     }
+    UA_NodeId_deleteMembers(&responseId);
+
     return retval;
 }
 
@@ -252,7 +263,7 @@ client_processChunk(void *application, UA_Connection *connection, UA_ByteString 
 
 /* Receive and process messages until a synchronous message arrives or the
  * timout finishes */
-static UA_StatusCode
+UA_StatusCode
 receiveServiceResponse(UA_Client *client, void *response, const UA_DataType *responseType,
                        UA_DateTime maxDate, UA_UInt32 *synchronousRequestId) {
     /* Prepare the response and the structure we give into processServiceResponse */
@@ -266,17 +277,21 @@ receiveServiceResponse(UA_Client *client, void *response, const UA_DataType *res
     UA_StatusCode retval;
     do {
         UA_DateTime now = UA_DateTime_nowMonotonic();
-        if(now > maxDate)
+
+        /* >= avoid timeout to be set to 0 */
+        if(now >= maxDate)
             return UA_STATUSCODE_GOODNONCRITICALTIMEOUT;
-        UA_UInt32 timeout = (UA_UInt32)((maxDate - now) / UA_MSEC_TO_DATETIME);
-        retval = UA_Connection_receiveChunksBlocking(&client->connection, &rd,
-                                                     client_processChunk, timeout);
+
+        /* round always to upper value to avoid timeout to be set to 0
+         * if (maxDate - now) < (UA_DATETIME_MSEC/2) */
+        UA_UInt32 timeout = (UA_UInt32)(((maxDate - now) + (UA_DATETIME_MSEC - 1)) / UA_DATETIME_MSEC);
+
+        retval = UA_Connection_receiveChunksBlocking(&client->connection, &rd, client_processChunk, timeout);
 
         if(retval != UA_STATUSCODE_GOOD && retval != UA_STATUSCODE_GOODNONCRITICALTIMEOUT) {
             if(retval == UA_STATUSCODE_BADCONNECTIONCLOSED)
                 client->state = UA_CLIENTSTATE_DISCONNECTED;
-            else
-                UA_Client_disconnect(client);
+            UA_Client_close(client);
             break;
         }
     } while(!rd.received);
@@ -298,14 +313,19 @@ __UA_Client_Service(UA_Client *client, const void *request,
             respHeader->serviceResult = UA_STATUSCODE_BADREQUESTTOOLARGE;
         else
             respHeader->serviceResult = retval;
-        UA_Client_disconnect(client);
+        UA_Client_close(client);
         return;
     }
 
     /* Retrieve the response */
     UA_DateTime maxDate = UA_DateTime_nowMonotonic() +
-        (client->config.timeout * UA_MSEC_TO_DATETIME);
+        (client->config.timeout * UA_DATETIME_MSEC);
     retval = receiveServiceResponse(client, response, responseType, maxDate, &requestId);
+    if (retval == UA_STATUSCODE_GOODNONCRITICALTIMEOUT){
+        /* In synchronous service, if we have don't have a reply we need to close the connection */
+        UA_Client_close(client);
+        retval = UA_STATUSCODE_BADCONNECTIONCLOSED;
+    }
     if(retval != UA_STATUSCODE_GOOD)
         respHeader->serviceResult = retval;
 }
@@ -341,8 +361,7 @@ __UA_Client_AsyncService(UA_Client *client, const void *request,
 UA_StatusCode
 UA_Client_runAsync(UA_Client *client, UA_UInt16 timeout) {
     /* TODO: Call repeated jobs that are scheduled */
-    UA_DateTime maxDate = UA_DateTime_nowMonotonic() +
-        (timeout * UA_MSEC_TO_DATETIME);
+    UA_DateTime maxDate = UA_DateTime_nowMonotonic() + (timeout * UA_DATETIME_MSEC);
     UA_StatusCode retval = receiveServiceResponse(client, NULL, NULL, maxDate, NULL);
     if(retval == UA_STATUSCODE_GOODNONCRITICALTIMEOUT)
         retval = UA_STATUSCODE_GOOD;

@@ -192,7 +192,7 @@ UA_Connection_receiveChunksBlocking(UA_Connection *connection, void *application
                                     UA_Connection_processChunk processCallback,
                                     UA_UInt32 timeout) {
     UA_DateTime now = UA_DateTime_nowMonotonic();
-    UA_DateTime maxDate = now + (timeout * UA_MSEC_TO_DATETIME);
+    UA_DateTime maxDate = now + (timeout * UA_DATETIME_MSEC);
 
     struct completeChunkTrampolineData data;
     data.called = false;
@@ -217,9 +217,14 @@ UA_Connection_receiveChunksBlocking(UA_Connection *connection, void *application
         /* We received a message. But the chunk is incomplete. Compute the
          * remaining timeout. */
         now = UA_DateTime_nowMonotonic();
-        if(now > maxDate)
+
+        /* >= avoid timeout to be set to 0 */
+        if(now >= maxDate)
             return UA_STATUSCODE_GOODNONCRITICALTIMEOUT;
-        timeout = (UA_UInt32)((maxDate - now) / UA_MSEC_TO_DATETIME);
+
+        /* round always to upper value to avoid timeout to be set to 0
+         * if (maxDate - now) < (UA_DATETIME_MSEC/2) */
+        timeout = (UA_UInt32)(((maxDate - now) + (UA_DATETIME_MSEC - 1)) / UA_DATETIME_MSEC);
     }
     return retval;
 }

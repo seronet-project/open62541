@@ -434,7 +434,7 @@ class DataTypeNode(Node):
             of this DataType.
 
             The function will parse the XML <Definition> of the dataType and extract
-            "Name"-"Type" tuples. If successfull, buildEncoding will return a nested
+            "Name"-"Type" tuples. If successful, buildEncoding will return a nested
             list of the following format:
 
             [['Alias1', ['Alias2', ['BuiltinType']]], [Alias2, ['BuiltinType']], ...]
@@ -537,6 +537,8 @@ class DataTypeNode(Node):
                 for at,av in x.attributes.items():
                     if at == "DataType":
                         fdtype = str(av)
+                        if fdtype in nodeset.aliases:
+                            fdtype = nodeset.aliases[fdtype]
                         isEnum = False
                     elif at == "Name":
                         fname = str(av)

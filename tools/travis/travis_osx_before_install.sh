@@ -5,7 +5,8 @@ brew install check
 brew install userspace-rcu
 brew install valgrind
 brew install graphviz
+brew install python
 
-pip install --user sphinx
-pip install --user breathe
-pip install --user sphinx_rtd_theme
+pip2 install --user sphinx
+pip2 install --user breathe
+pip2 install --user sphinx_rtd_theme

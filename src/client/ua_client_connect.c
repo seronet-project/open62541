@@ -97,76 +97,47 @@ HelAckHandshake(UA_Client *client) {
     /* Loop until we have a complete chunk */
     retval = UA_Connection_receiveChunksBlocking(conn, client, processACKResponse,
                                                  client->config.timeout);
-    if(retval != UA_STATUSCODE_GOOD)
+    if(retval != UA_STATUSCODE_GOOD){
         UA_LOG_INFO(client->config.logger, UA_LOGCATEGORY_NETWORK,
                     "Receiving ACK message failed");
+        if(retval == UA_STATUSCODE_BADCONNECTIONCLOSED)
+            client->state = UA_CLIENTSTATE_DISCONNECTED;
+        UA_Client_close(client);
+    }
     return retval;
 }
 
-static UA_StatusCode
-processDecodedOPNResponse(void *application, UA_SecureChannel *channel,
-                          UA_MessageType messageType, UA_UInt32 requestId,
-                          const UA_ByteString *message) {
-    /* Does the request id match? */
-    UA_Client *client = (UA_Client*)application;
-    if(requestId != client->requestId)
-        return UA_STATUSCODE_BADCOMMUNICATIONERROR;
+static void
+processDecodedOPNResponse(UA_Client *client, UA_OpenSecureChannelResponse *response) {
+    /* Replace the token */
+    UA_ChannelSecurityToken_deleteMembers(&client->channel.securityToken);
+    client->channel.securityToken = response->securityToken;
+    UA_ChannelSecurityToken_init(&response->securityToken);
 
-    /* Is the content of the expected type? */
-    size_t offset = 0;
-    UA_NodeId responseId;
-    UA_NodeId expectedId =
-        UA_NODEID_NUMERIC(0, UA_TYPES[UA_TYPES_OPENSECURECHANNELRESPONSE].binaryEncodingId);
-    UA_StatusCode retval = UA_NodeId_decodeBinary(message, &offset, &responseId);
-    if(retval != UA_STATUSCODE_GOOD)
-        return retval;
-    if(!UA_NodeId_equal(&responseId, &expectedId)) {
-        UA_NodeId_deleteMembers(&responseId);
-        return UA_STATUSCODE_BADCOMMUNICATIONERROR;
-    }
-    UA_NodeId_deleteMembers(&responseId);
+    /* Replace the nonce */
+    UA_ByteString_deleteMembers(&client->channel.remoteNonce);
+    client->channel.remoteNonce = response->serverNonce;
+    UA_ByteString_init(&response->serverNonce);
 
-    /* Decode the response */
-    UA_OpenSecureChannelResponse response;
-    retval = UA_OpenSecureChannelResponse_decodeBinary(message, &offset, &response);
-    if(retval != UA_STATUSCODE_GOOD)
-        return retval;
+    if(client->channel.state == UA_SECURECHANNELSTATE_OPEN)
+        UA_LOG_DEBUG(client->config.logger, UA_LOGCATEGORY_SECURECHANNEL,
+                     "SecureChannel in the server renewed");
+    else
+        UA_LOG_DEBUG(client->config.logger, UA_LOGCATEGORY_SECURECHANNEL,
+                     "Opened SecureChannel acknowledged by the server");
 
     /* Response.securityToken.revisedLifetime is UInt32 we need to cast it to
      * DateTime=Int64 we take 75% of lifetime to start renewing as described in
      * standard */
-    client->nextChannelRenewal = UA_DateTime_nowMonotonic() +
-        (UA_DateTime)(response.securityToken.revisedLifetime * (UA_Double)UA_MSEC_TO_DATETIME * 0.75);
-
-    /* Replace the token and nonce */
-    UA_ChannelSecurityToken_deleteMembers(&client->channel.securityToken);
-    UA_ByteString_deleteMembers(&client->channel.remoteNonce);
-    client->channel.securityToken = response.securityToken;
-    client->channel.remoteNonce = response.serverNonce;
-    UA_ResponseHeader_deleteMembers(&response.responseHeader); /* the other members were moved */
-    if(client->channel.state == UA_SECURECHANNELSTATE_OPEN)
-        UA_LOG_DEBUG(client->config.logger, UA_LOGCATEGORY_SECURECHANNEL,
-                     "SecureChannel renewed");
-    else
-        UA_LOG_DEBUG(client->config.logger, UA_LOGCATEGORY_SECURECHANNEL,
-                     "SecureChannel opened");
     client->channel.state = UA_SECURECHANNELSTATE_OPEN;
-    return UA_STATUSCODE_GOOD;
+    client->nextChannelRenewal = UA_DateTime_nowMonotonic() + (UA_DateTime)
+        (client->channel.securityToken.revisedLifetime * (UA_Double)UA_DATETIME_MSEC * 0.75);
 }
 
-static UA_StatusCode
-processOPNResponse(void *application, UA_Connection *connection, UA_ByteString *chunk) {
-    UA_Client *client = (UA_Client*)application;
-    return UA_SecureChannel_processChunk(&client->channel, chunk,
-                                         processDecodedOPNResponse,
-                                         client);
-}
-
-/* OPN messges to renew the channel are sent asynchronous */
 static UA_StatusCode
 openSecureChannel(UA_Client *client, UA_Boolean renew) {
     /* Check if sc is still valid */
-    if(renew && client->nextChannelRenewal - UA_DateTime_nowMonotonic() > 0)
+    if(renew && client->nextChannelRenewal > UA_DateTime_nowMonotonic())
         return UA_STATUSCODE_GOOD;
 
     UA_Connection *conn = &client->connection;
@@ -191,42 +162,37 @@ openSecureChannel(UA_Client *client, UA_Boolean renew) {
     opnSecRq.clientNonce = client->channel.localNonce;
     opnSecRq.requestedLifetime = client->config.secureChannelLifeTime;
 
-    /* Prepare the entry for the linked list */
-    UA_UInt32 requestId = ++client->requestId;
-    AsyncServiceCall *ac = NULL;
-    if(renew) {
-        ac = (AsyncServiceCall*)UA_malloc(sizeof(AsyncServiceCall));
-        if(!ac)
-            return UA_STATUSCODE_BADOUTOFMEMORY;
-        ac->callback = (UA_ClientAsyncServiceCallback)processDecodedOPNResponse;
-        ac->responseType = &UA_TYPES[UA_TYPES_OPENSECURECHANNELRESPONSE];
-        ac->requestId = requestId;
-        ac->userdata = NULL;
-    }
-
     /* Send the OPN message */
+    UA_UInt32 requestId = ++client->requestId;
     UA_StatusCode retval =
-        UA_SecureChannel_sendAsymmetricOPNMessage(&client->channel, requestId,
-                                                  &opnSecRq, &UA_TYPES[UA_TYPES_OPENSECURECHANNELREQUEST]);
+        UA_SecureChannel_sendAsymmetricOPNMessage(&client->channel, requestId, &opnSecRq,
+                                                  &UA_TYPES[UA_TYPES_OPENSECURECHANNELREQUEST]);
     if(retval != UA_STATUSCODE_GOOD) {
         UA_LOG_ERROR(client->config.logger, UA_LOGCATEGORY_SECURECHANNEL,
                      "Sending OPN message failed with error %s", UA_StatusCode_name(retval));
-        UA_Client_disconnect(client);
-        if(renew)
-            UA_free(ac);
+        UA_Client_close(client);
         return retval;
     }
 
     UA_LOG_DEBUG(client->config.logger, UA_LOGCATEGORY_SECURECHANNEL, "OPN message sent");
 
-    /* Store the entry for async processing and return */
-    if(renew) {
-        LIST_INSERT_HEAD(&client->asyncServiceCalls, ac, pointers);
+    /* Receive / decrypt / decode the OPN response. Process async services in
+     * the background until the OPN response arrives. */
+    UA_OpenSecureChannelResponse response;
+    retval = receiveServiceResponse(client, &response,
+                                    &UA_TYPES[UA_TYPES_OPENSECURECHANNELRESPONSE],
+                                    UA_DateTime_nowMonotonic() +
+                                    ((UA_DateTime)client->config.timeout * UA_DATETIME_MSEC),
+                                    &requestId);
+                                    
+    if(retval != UA_STATUSCODE_GOOD) {
+        UA_Client_close(client);
         return retval;
     }
 
-    return UA_Connection_receiveChunksBlocking(&client->connection, client,
-                                               processOPNResponse, client->config.timeout);
+    processDecodedOPNResponse(client, &response);
+    UA_OpenSecureChannelResponse_deleteMembers(&response);
+    return retval;
 }
 
 static UA_StatusCode
@@ -260,7 +226,7 @@ activateSession(UA_Client *client) {
     __UA_Client_Service(client, &request, &UA_TYPES[UA_TYPES_ACTIVATESESSIONREQUEST],
                         &response, &UA_TYPES[UA_TYPES_ACTIVATESESSIONRESPONSE]);
 
-    if(response.responseHeader.serviceResult) {
+    if(response.responseHeader.serviceResult != UA_STATUSCODE_GOOD) {
         UA_LOG_ERROR(client->config.logger, UA_LOGCATEGORY_CLIENT,
                      "ActivateSession failed with error code %s",
                      UA_StatusCode_name(response.responseHeader.serviceResult));
@@ -284,7 +250,6 @@ UA_Client_getEndpointsInternal(UA_Client *client, size_t* endpointDescriptionsSi
     request.endpointUrl = client->endpointUrl;
 
     UA_GetEndpointsResponse response;
-    UA_GetEndpointsResponse_init(&response);
     __UA_Client_Service(client, &request, &UA_TYPES[UA_TYPES_GETENDPOINTSREQUEST],
                         &response, &UA_TYPES[UA_TYPES_GETENDPOINTSRESPONSE]);
 
@@ -385,7 +350,6 @@ createSession(UA_Client *client) {
     UA_String_copy(&client->endpointUrl, &request.endpointUrl);
 
     UA_CreateSessionResponse response;
-    UA_CreateSessionResponse_init(&response);
     __UA_Client_Service(client, &request, &UA_TYPES[UA_TYPES_CREATESESSIONREQUEST],
                         &response, &UA_TYPES[UA_TYPES_CREATESESSIONRESPONSE]);
 
@@ -400,11 +364,10 @@ createSession(UA_Client *client) {
 UA_StatusCode
 UA_Client_connectInternal(UA_Client *client, const char *endpointUrl,
                           UA_Boolean endpointsHandshake, UA_Boolean createNewSession) {
-    UA_ChannelSecurityToken_init(&client->channel.securityToken);
-    client->channel.state = UA_SECURECHANNELSTATE_FRESH;
-
     if(client->state >= UA_CLIENTSTATE_CONNECTED)
         return UA_STATUSCODE_GOOD;
+    UA_ChannelSecurityToken_init(&client->channel.securityToken);
+    client->channel.state = UA_SECURECHANNELSTATE_FRESH;
 
     UA_StatusCode retval = UA_STATUSCODE_GOOD;
     client->connection =
@@ -436,6 +399,22 @@ UA_Client_connectInternal(UA_Client *client, const char *endpointUrl,
         goto cleanup;
     client->state = UA_CLIENTSTATE_SECURECHANNEL;
 
+    /* Try to activate an existing Session for this SecureChannel */
+    if((!UA_NodeId_equal(&client->authenticationToken, &UA_NODEID_NULL)) && (createNewSession)) {
+        retval = activateSession(client);
+        if(retval == UA_STATUSCODE_BADSESSIONIDINVALID) {
+            /* Could not recover an old session. Remove authenticationToken */
+            UA_NodeId_deleteMembers(&client->authenticationToken);
+        }else{
+            if(retval != UA_STATUSCODE_GOOD)
+                goto cleanup;
+            client->state = UA_CLIENTSTATE_SESSION;
+            return retval;
+        }
+    }else{
+        UA_NodeId_deleteMembers(&client->authenticationToken);
+    }
+
     /* Get Endpoints */
     if(endpointsHandshake) {
         retval = getEndpoints(client);
@@ -443,20 +422,21 @@ UA_Client_connectInternal(UA_Client *client, const char *endpointUrl,
             goto cleanup;
     }
 
-    /* Open a Session */
+    /* Create the Session for this SecureChannel */
     if(createNewSession) {
         retval = createSession(client);
         if(retval != UA_STATUSCODE_GOOD)
             goto cleanup;
         retval = activateSession(client);
-        if(retval != UA_STATUSCODE_GOOD)
-            goto cleanup;
-        client->state = UA_CLIENTSTATE_SESSION;
     }
+
+    if(retval != UA_STATUSCODE_GOOD)
+        goto cleanup;
+    client->state = UA_CLIENTSTATE_SESSION;
     return retval;
 
 cleanup:
-    UA_Client_disconnect(client);
+    UA_Client_close(client);
     return retval;
 }
 
@@ -478,7 +458,8 @@ UA_StatusCode
 UA_Client_manuallyRenewSecureChannel(UA_Client *client) {
     UA_StatusCode retval = openSecureChannel(client, true);
     if(retval != UA_STATUSCODE_GOOD)
-        client->state = UA_CLIENTSTATE_DISCONNECTED;
+        UA_Client_close(client);
+
     return retval;
 }
 
@@ -513,21 +494,41 @@ sendCloseSecureChannel(UA_Client *client) {
     UA_SecureChannel_sendSymmetricMessage(channel, ++client->requestId,
                                           UA_MESSAGETYPE_CLO, &request,
                                           &UA_TYPES[UA_TYPES_CLOSESECURECHANNELREQUEST]);
+    UA_CloseSecureChannelRequest_deleteMembers(&request);
     UA_SecureChannel_deleteMembersCleanup(&client->channel);
 }
 
 UA_StatusCode
 UA_Client_disconnect(UA_Client *client) {
     /* Is a session established? */
-    if(client->state == UA_CLIENTSTATE_SESSION)
+    if(client->state == UA_CLIENTSTATE_SESSION){
+        client->state = UA_CLIENTSTATE_SESSION_DISCONNECTED;
         sendCloseSession(client);
+    }
+    UA_NodeId_deleteMembers(&client->authenticationToken);
+    client->requestHandle = 0;
 
     /* Is a secure channel established? */
     if(client->state >= UA_CLIENTSTATE_SECURECHANNEL)
         sendCloseSecureChannel(client);
 
     /* Close the TCP connection */
-    if(client->state >= UA_CLIENTSTATE_CONNECTED)
+    if(client->connection.state != UA_CONNECTION_CLOSED)
+        client->connection.close(&client->connection);
+
+    client->state = UA_CLIENTSTATE_DISCONNECTED;
+    return UA_STATUSCODE_GOOD;
+}
+
+UA_StatusCode
+UA_Client_close(UA_Client *client) {
+    client->requestHandle = 0;
+
+    if (client->state >= UA_CLIENTSTATE_SECURECHANNEL)
+        UA_SecureChannel_deleteMembersCleanup(&client->channel);
+
+    /* Close the TCP connection */
+    if(client->connection.state != UA_CONNECTION_CLOSED)
         client->connection.close(&client->connection);
 
     client->state = UA_CLIENTSTATE_DISCONNECTED;

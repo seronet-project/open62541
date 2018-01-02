@@ -246,7 +246,7 @@ def generateExtensionObjectSubtypeCode(node, parent, nodeset, recursionDepth=0, 
     code.append(
         "if(UA_ByteString_allocBuffer(&" + instanceName + "->content.encoded.body, 65000) != UA_STATUSCODE_GOOD) {}")
 
-    # Encode each value as a bytestring seperately.
+    # Encode each value as a bytestring separately.
     code.append("UA_Byte *pos" + instanceName + " = " + instanceName + "->content.encoded.body.data;")
     code.append("const UA_Byte *end" + instanceName + " = &" + instanceName + "->content.encoded.body.data[65000];")
     encFieldIdx = 0
@@ -311,7 +311,7 @@ def generateValueCodeDummy(dataTypeNode, parentNode, nodeset, bootstrapping=True
 
 def getTypesArrayForValue(nodeset, value):
     typeNode = nodeset.getNodeByBrowseName(value.__class__.__name__)
-    if typeNode is None:
+    if typeNode is None or value.isInternal:
         typesArray = "UA_TYPES"
     else:
         typesArray = typeNode.typesArray
@@ -345,8 +345,6 @@ def generateValueCode(node, parentNode, nodeset, bootstrapping=True, max_string_
         # User the following strategy for all directly mappable values a la 'UA_Type MyInt = (UA_Type) 23;'
         if node.value[0].numericRepresentation == BUILTINTYPE_TYPEID_GUID:
             logger.warn("Don't know how to print array of GUID in node " + str(parentNode.id))
-        elif node.value[0].numericRepresentation == BUILTINTYPE_TYPEID_DATETIME:
-            logger.warn("Don't know how to print array of DateTime in node " + str(parentNode.id))
         elif node.value[0].numericRepresentation == BUILTINTYPE_TYPEID_DIAGNOSTICINFO:
             logger.warn("Don't know how to print array of DiagnosticInfo in node " + str(parentNode.id))
         elif node.value[0].numericRepresentation == BUILTINTYPE_TYPEID_STATUSCODE:
@@ -379,8 +377,6 @@ def generateValueCode(node, parentNode, nodeset, bootstrapping=True, max_string_
         # User the following strategy for all directly mappable values a la 'UA_Type MyInt = (UA_Type) 23;'
         if node.value[0].numericRepresentation == BUILTINTYPE_TYPEID_GUID:
             logger.warn("Don't know how to print scalar GUID in node " + str(parentNode.id))
-        elif node.value[0].numericRepresentation == BUILTINTYPE_TYPEID_DATETIME:
-            logger.warn("Don't know how to print scalar DateTime in node " + str(parentNode.id))
         elif node.value[0].numericRepresentation == BUILTINTYPE_TYPEID_DIAGNOSTICINFO:
             logger.warn("Don't know how to print scalar DiagnosticInfo in node " + str(parentNode.id))
         elif node.value[0].numericRepresentation == BUILTINTYPE_TYPEID_STATUSCODE:
@@ -457,9 +453,9 @@ def generateSubtypeOfDefinitionCode(node):
             return generateNodeIdCode(ref.target)
     return "UA_NODEID_NULL"
 
-def generateNodeCode(node, supressGenerationOfAttribute, generate_ns0, parentrefs, nodeset, max_string_length):
+def generateNodeCode(node, suppressGenerationOfAttribute, generate_ns0, parentrefs, nodeset, max_string_length):
     code = []
-    code.append("{")
+    code.append("UA_StatusCode retVal = UA_STATUSCODE_GOOD;")
 
     codeCleanup = []
 
@@ -484,8 +480,8 @@ def generateNodeCode(node, supressGenerationOfAttribute, generate_ns0, parentref
     elif isinstance(node, ViewNode):
         code.extend(generateViewNodeCode(node))
 
-    code.append("attr.displayName = " + generateLocalizedTextCode(node.displayName, max_string_length) + ";")
-    code.append("attr.description = " + generateLocalizedTextCode(node.description, max_string_length) + ";")
+    code.append("attr.displayName = " + generateLocalizedTextCode(node.displayName, alloc=False, max_string_length=max_string_length) + ";")
+    code.append("attr.description = " + generateLocalizedTextCode(node.description, alloc=False, max_string_length=max_string_length) + ";")
     code.append("attr.writeMask = %d;" % node.writeMask)
     code.append("attr.userWriteMask = %d;" % node.userWriteMask)
 
@@ -505,18 +501,23 @@ def generateNodeCode(node, supressGenerationOfAttribute, generate_ns0, parentref
     code.append(generateNodeIdCode(node.id) + ",")
     code.append(generateNodeIdCode(parentNode) + ",")
     code.append(generateNodeIdCode(parentRef) + ",")
-    code.append(generateQualifiedNameCode(node.browseName) + ",")
+    code.append(generateQualifiedNameCode(node.browseName, max_string_length=max_string_length) + ",")
     if isinstance(node, VariableTypeNode):
         # we need the HasSubtype reference
         code.append(generateSubtypeOfDefinitionCode(node) + ",")
     elif isinstance(node, VariableNode) or isinstance(node, ObjectNode):
         typeDefCode = "UA_NODEID_NULL" if typeDef is None else generateNodeIdCode(typeDef)
         code.append(typeDefCode + ",")
+        # remove hasTypeDef reference from list to be printed
+        for ref in node.printRefs:
+            if ref.referenceType.i == 40:
+                if (ref.isForward and ref.source == node.id) or (not ref.isForward and ref.target == node.id):
+                    node.printRefs.remove(ref)
     code.append("attr,")
     if isinstance(node, MethodNode):
         code.append("NULL, 0, NULL, 0, NULL, NULL, NULL);")
     else:
         code.append("NULL, NULL);")
     code.extend(codeCleanup)
-    code.append("}\n")
+    
     return "\n".join(code)

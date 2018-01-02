@@ -101,7 +101,7 @@ int main(int argc, char *argv[]) {
     UA_NodeId monitorThis = UA_NODEID_STRING(1, "the.answer");
     UA_UInt32 monId = 0;
     UA_Client_Subscriptions_addMonitoredItem(client, subId, monitorThis, UA_ATTRIBUTEID_VALUE,
-                                             &handler_TheAnswerChanged, NULL, &monId);
+                                             &handler_TheAnswerChanged, NULL, &monId, 250);
     if (monId)
         printf("Monitoring 'the.answer', id %u\n", subId);
     /* The first publish request should return the initial value of the variable */
@@ -165,11 +165,11 @@ int main(int argc, char *argv[]) {
     retval = UA_Client_call(client, UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER),
                             UA_NODEID_NUMERIC(1, 62541), 1, &input, &outputSize, &output);
     if(retval == UA_STATUSCODE_GOOD) {
-        printf("Method call was successfull, and %lu returned values available.\n",
+        printf("Method call was successful, and %lu returned values available.\n",
                (unsigned long)outputSize);
         UA_Array_delete(output, outputSize, &UA_TYPES[UA_TYPES_VARIANT]);
     } else {
-        printf("Method call was unsuccessfull, and %x returned values available.\n", retval);
+        printf("Method call was unsuccessful, and %x returned values available.\n", retval);
     }
     UA_Variant_deleteMembers(&input);
 #endif

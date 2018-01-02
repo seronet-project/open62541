@@ -1,6 +1,19 @@
 /* This work is licensed under a Creative Commons CCZero 1.0 Universal License.
  * See http://creativecommons.org/publicdomain/zero/1.0/ for more information. */
 
+/* Enable POSIX features */
+#if !defined(_XOPEN_SOURCE) && !defined(_WRS_KERNEL)
+# define _XOPEN_SOURCE 600
+#endif
+#ifndef _DEFAULT_SOURCE
+# define _DEFAULT_SOURCE
+#endif
+/* On older systems we need to define _BSD_SOURCE.
+ * _DEFAULT_SOURCE is an alias for that. */
+#ifndef _BSD_SOURCE
+# define _BSD_SOURCE
+#endif
+
 /**
  * Client disconnect handling
  * --------------------------
@@ -8,9 +21,7 @@
  * is shut down while the client is connected. You just need to call connect
  * again and the client will automatically reconnect.
  *
- * This example is very similar to the tutorial_client_firststeps.c
- */
-
+ * This example is very similar to the tutorial_client_firststeps.c. */
 
 #include "open62541.h"
 #include <signal.h>
@@ -70,10 +81,11 @@ int main(void) {
         if (retval == UA_STATUSCODE_GOOD &&
             UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_DATETIME])) {
             UA_DateTime raw_date = *(UA_DateTime *) value.data;
-            UA_String string_date = UA_DateTime_toString(raw_date);
-            UA_LOG_INFO(logger, UA_LOGCATEGORY_CLIENT, "string date is: %.*s", (int) string_date.length, string_date.data);
-            UA_String_deleteMembers(&string_date);
+            UA_DateTimeStruct dts = UA_DateTime_toStruct(raw_date);
+            UA_LOG_INFO(logger, UA_LOGCATEGORY_USERLAND, "date is: %u-%u-%u %u:%u:%u.%03u",
+                        dts.day, dts.month, dts.year, dts.hour, dts.min, dts.sec, dts.milliSec);
         }
+        UA_Variant_deleteMembers(&value);
         UA_sleep_ms(1000);
     };
 

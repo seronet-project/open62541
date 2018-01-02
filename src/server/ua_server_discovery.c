@@ -30,6 +30,7 @@ register_server_with_discovery_server(UA_Server *server,
         UA_LOG_ERROR(server->config.logger, UA_LOGCATEGORY_CLIENT,
                      "Connecting to the discovery server failed with statuscode %s",
                      UA_StatusCode_name(retval));
+        UA_Client_disconnect(client);
         UA_Client_delete(client);
         return retval;
     }
@@ -66,8 +67,11 @@ register_server_with_discovery_server(UA_Server *server,
     size_t nl_discurls = server->config.networkLayersSize;
     size_t total_discurls = config_discurls + nl_discurls;
     request.server.discoveryUrls = (UA_String*)UA_alloca(sizeof(UA_String) * total_discurls);
-    if (!request.server.discoveryUrls)
+    if (!request.server.discoveryUrls) {
+        UA_Client_disconnect(client);
+        UA_Client_delete(client);
         return UA_STATUSCODE_BADOUTOFMEMORY;
+    }
     request.server.discoveryUrlsSize = total_discurls;
 
     for(size_t i = 0; i < config_discurls; ++i)
@@ -95,7 +99,6 @@ register_server_with_discovery_server(UA_Server *server,
 
     // First try with RegisterServer2, if that isn't implemented, use RegisterServer
     UA_RegisterServer2Response response;
-    UA_RegisterServer2Response_init(&response);
     __UA_Client_Service(client, &request, &UA_TYPES[UA_TYPES_REGISTERSERVER2REQUEST],
                         &response, &UA_TYPES[UA_TYPES_REGISTERSERVER2RESPONSE]);
 
@@ -113,7 +116,6 @@ register_server_with_discovery_server(UA_Server *server,
         request_fallback.server = request.server;
 
         UA_RegisterServerResponse response_fallback;
-        UA_RegisterServerResponse_init(&response_fallback);
 
         __UA_Client_Service(client, &request_fallback,
                             &UA_TYPES[UA_TYPES_REGISTERSERVERREQUEST],

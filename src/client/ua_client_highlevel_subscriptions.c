@@ -156,7 +156,7 @@ UA_Client_Subscriptions_addMonitoredEvent(UA_Client *client, const UA_UInt32 sub
     request.itemsToCreateSize = 1;
     UA_CreateMonitoredItemsResponse response = UA_Client_Service_createMonitoredItems(client, request);
 
-    // slight misuse of retval here to check if the deletion was successfull.
+    // slight misuse of retval here to check if the deletion was successful.
     UA_StatusCode retval;
     if(response.resultsSize == 0)
         retval = response.responseHeader.serviceResult;
@@ -202,7 +202,8 @@ UA_StatusCode
 UA_Client_Subscriptions_addMonitoredItem(UA_Client *client, UA_UInt32 subscriptionId,
                                          UA_NodeId nodeId, UA_UInt32 attributeID,
                                          UA_MonitoredItemHandlingFunction hf,
-                                         void *hfContext, UA_UInt32 *newMonitoredItemId) {
+                                         void *hfContext, UA_UInt32 *newMonitoredItemId,
+                                         UA_Double samplingInterval) {
     UA_Client_Subscription *sub = findSubscription(client, subscriptionId);
     if(!sub)
         return UA_STATUSCODE_BADSUBSCRIPTIONIDINVALID;
@@ -222,14 +223,14 @@ UA_Client_Subscriptions_addMonitoredItem(UA_Client *client, UA_UInt32 subscripti
     item.itemToMonitor.attributeId = attributeID;
     item.monitoringMode = UA_MONITORINGMODE_REPORTING;
     item.requestedParameters.clientHandle = ++(client->monitoredItemHandles);
-    item.requestedParameters.samplingInterval = sub->publishingInterval;
+    item.requestedParameters.samplingInterval = samplingInterval;
     item.requestedParameters.discardOldest = true;
     item.requestedParameters.queueSize = 1;
     request.itemsToCreate = &item;
     request.itemsToCreateSize = 1;
     UA_CreateMonitoredItemsResponse response = UA_Client_Service_createMonitoredItems(client, request);
 
-    // slight misuse of retval here to check if the addition was successfull.
+    // slight misuse of retval here to check if the addition was successful.
     UA_StatusCode retval = response.responseHeader.serviceResult;
     if(retval == UA_STATUSCODE_GOOD) {
         if(response.resultsSize == 1)
@@ -248,7 +249,7 @@ UA_Client_Subscriptions_addMonitoredItem(UA_Client *client, UA_UInt32 subscripti
     UA_NodeId_copy(&nodeId, &newMon->monitoredNodeId);
     newMon->attributeID = attributeID;
     newMon->clientHandle = client->monitoredItemHandles;
-    newMon->samplingInterval = sub->publishingInterval;
+    newMon->samplingInterval = samplingInterval;
     newMon->queueSize = 1;
     newMon->discardOldest = true;
     newMon->handler = hf;
@@ -402,6 +403,11 @@ UA_Client_Subscriptions_manuallySendPublishRequest(UA_Client *client) {
     if(client->state < UA_CLIENTSTATE_SESSION)
         return UA_STATUSCODE_BADSERVERNOTCONNECTED;
 
+    UA_StatusCode retval = UA_STATUSCODE_GOOD;
+
+    UA_DateTime now = UA_DateTime_nowMonotonic();
+    UA_DateTime maxDate = now + (UA_DateTime)(client->config.timeout * UA_DATETIME_MSEC);
+
     UA_Boolean moreNotifications = true;
     while(moreNotifications) {
         UA_PublishRequest request;
@@ -427,12 +433,23 @@ UA_Client_Subscriptions_manuallySendPublishRequest(UA_Client *client) {
 
         UA_PublishResponse response = UA_Client_Service_publish(client, request);
         UA_Client_processPublishResponse(client, &request, &response);
-        moreNotifications = response.moreNotifications;
-
+        
+        now = UA_DateTime_nowMonotonic();
+        if (now > maxDate){
+            moreNotifications = UA_FALSE;
+            retval = UA_STATUSCODE_GOODNONCRITICALTIMEOUT;
+        }else{
+            moreNotifications = response.moreNotifications;
+        }
+        
         UA_PublishResponse_deleteMembers(&response);
         UA_PublishRequest_deleteMembers(&request);
     }
-    return UA_STATUSCODE_GOOD;
+    
+    if(client->state < UA_CLIENTSTATE_SESSION)
+        return UA_STATUSCODE_BADSERVERNOTCONNECTED;
+
+    return retval;
 }
 
 #endif /* UA_ENABLE_SUBSCRIPTIONS */

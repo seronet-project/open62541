@@ -81,7 +81,11 @@ struct UA_Server {
     void* registerServerCallbackData;
 # ifdef UA_ENABLE_DISCOVERY_MULTICAST
     mdns_daemon_t *mdnsDaemon;
+#ifdef _WIN32
+    SOCKET mdnsSocket;
+#else
     int mdnsSocket;
+#endif
     UA_Boolean mdnsMainSrvAdded;
 #  ifdef UA_ENABLE_MULTITHREADING
     pthread_t mdnsThread;
@@ -281,7 +285,7 @@ void Service_Browse_single(UA_Server *server, UA_Session *session,
 UA_DataValue
 UA_Server_readWithSession(UA_Server *server, UA_Session *session,
                           const UA_ReadValueId *item,
-                          UA_TimestampsToReturn timestamps);
+                          UA_TimestampsToReturn timestampsToReturn);
 
 /* Checks if a registration timed out and removes that registration.
  * Should be called periodically in main loop */

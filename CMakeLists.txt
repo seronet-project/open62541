@@ -15,7 +15,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-set(LIB_INSTALL_DIR /usr/lib CACHE PATH "Installation path of libraries")
+set(LIB_INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/lib CACHE PATH "Installation path of libraries")
 
 ###########
 # Version #
@@ -25,6 +25,8 @@ set(OPEN62541_VER_MAJOR 0)
 set(OPEN62541_VER_MINOR 3)
 set(OPEN62541_VER_PATCH 0)
 set(OPEN62541_VER_LABEL "dev") # Appended to the X.Y.Z version format. For example "-rc1" or an empty string
+
+set(LIB_INSTALL_DIR lib CACHE PATH "Installation path of libraries")
 
 # Set OPEN62541_VER_COMMIT
 if(GIT_FOUND)
@@ -63,6 +65,8 @@ option(UA_ENABLE_COVERAGE "Enable gcov coverage" OFF)
 option(UA_ENABLE_ASYNC_CLIENT_API "Enable API of async client" ON)
 option(BUILD_SHARED_LIBS "Enable building of shared libraries (dll/so)" OFF)
 
+set(UA_VXWORKS_WRS_KERNEL OFF CACHE BOOL "Enable if you want to compile for VxWorks as kernel Module")
+
 if(UA_ENABLE_COVERAGE)
   set(CMAKE_BUILD_TYPE DEBUG)
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fprofile-arcs -ftest-coverage")
@@ -85,33 +89,55 @@ mark_as_advanced(UA_ENABLE_STATUSCODE_DESCRIPTIONS)
 option(UA_ENABLE_TYPENAMES "Add the type and member names to the UA_DataType structure" ON)
 mark_as_advanced(UA_ENABLE_TYPENAMES)
 
-option(UA_ENABLE_EMBEDDED_LIBC "Use a custom implementation of some libc functions that might be missing on embedded targets (e.g. string handling)." OFF)
-mark_as_advanced(UA_ENABLE_EMBEDDED_LIBC)
-
 option(UA_ENABLE_DETERMINISTIC_RNG "Do not seed the random number generator (e.g. for unit tests)." OFF)
 mark_as_advanced(UA_ENABLE_DETERMINISTIC_RNG)
 
 option(UA_ENABLE_FULL_NS0 "Use the full NS0 instead of a minimal Namespace 0 nodeset" OFF)
+if (MSVC AND UA_ENABLE_FULL_NS0)
+    # For the full NS0 we need a stack size of 8MB (as it is default on linux)
+    # See https://github.com/open62541/open62541/issues/1326
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /STACK:8000000")
+endif()
 
-option(UA_ENABLE_VALGRIND_UNIT_TESTS "Use Valgrind to detect memory leaks when running the unit tests" OFF)
-mark_as_advanced(UA_ENABLE_VALGRIND_UNIT_TESTS)
+option(UA_ENABLE_UNIT_TESTS_MEMCHECK "Use Valgrind (Linux) or DrMemory (Windows) to detect memory leaks when running the unit tests" OFF)
+mark_as_advanced(UA_ENABLE_UNIT_TESTS_MEMCHECK)
 
 option(UA_ENABLE_NONSTANDARD_UDP "Enable udp extension (non-standard)" OFF)
 mark_as_advanced(UA_ENABLE_NONSTANDARD_UDP)
+
+option(UA_ENABLE_UNIT_TEST_FAILURE_HOOKS
+       "Add hooks to force failure modes for additional unit tests. Not for production use!" OFF)
+mark_as_advanced(UA_ENABLE_UNIT_TEST_FAILURE_HOOKS)
+
+# Build options for debugging
+option(UA_DEBUG "Enable assertions and additional functionality that should not be included in release builds" OFF)
+mark_as_advanced(UA_DEBUG)
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(UA_DEBUG ON)
+endif()
+
+option(UA_DEBUG_DUMP_PKGS "Dump every package received by the server as hexdump format" OFF)
+mark_as_advanced(UA_DEBUG_DUMP_PKGS)
 
 # Build Targets
 option(UA_BUILD_EXAMPLES "Build example servers and clients" OFF)
 option(UA_BUILD_UNIT_TESTS "Build the unit tests" OFF)
 option(UA_BUILD_FUZZING "Build the fuzzing executables" OFF)
 mark_as_advanced(UA_BUILD_FUZZING)
-if (UA_BUILD_FUZZING)
+if(UA_BUILD_FUZZING)
     # oss-fuzz already defines this by default
     add_definitions(-DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
 endif()
+
+option(UA_BUILD_FUZZING_CORPUS "Build the fuzzing corpus" OFF)
+mark_as_advanced(UA_BUILD_FUZZING_CORPUS)
+if(UA_BUILD_FUZZING_CORPUS)
+    add_definitions(-DUA_DEBUG_DUMP_PKGS_FILE)
+    set(UA_ENABLE_TYPENAMES ON CACHE STRING "" FORCE)
+endif()
+
 option(UA_BUILD_OSS_FUZZ "Special build switch used in oss-fuzz" OFF)
 mark_as_advanced(UA_BUILD_OSS_FUZZ)
-option(UA_DEBUG_DUMP_PKGS "Dump every package received by the server as hexdump format" OFF)
-mark_as_advanced(UA_DEBUG_DUMP_PKGS)
 
 # Advanced Build Targets
 option(UA_BUILD_SELFSIGNED_CERTIFICATE "Generate self-signed certificate" OFF)
@@ -147,7 +173,7 @@ if(NOT WIN32)
     list(APPEND open62541_LIBRARIES stdc++)
   else()
     list(APPEND open62541_LIBRARIES pthread m)
-    if(NOT APPLE)
+    if(NOT APPLE AND (NOT ${CMAKE_SYSTEM_NAME} MATCHES "OpenBSD"))
       list(APPEND open62541_LIBRARIES rt)
     endif()
   endif()
@@ -177,13 +203,20 @@ if(NOT UA_COMPILE_AS_CXX AND (CMAKE_COMPILER_IS_GNUCC OR "x${CMAKE_C_COMPILER_ID
                     -Wmultichar
                     -Wundef
                     -Wc++-compat)
-     if(NOT WIN32 AND NOT CYGWIN AND NOT QNXNTO)
-        add_definitions(-Wshadow -Wconversion -fvisibility=hidden -fPIC)
-     endif()
 
-     if(UA_ENABLE_AMALGAMATION)
-         add_definitions(-Wno-unused-function)
-     endif()
+    if(NOT WIN32 AND NOT CYGWIN AND NOT QNXNTO AND (NOT ${CMAKE_SYSTEM_NAME} MATCHES "OpenBSD"))
+        add_definitions(-Wshadow -Wconversion -fvisibility=hidden -fPIC)
+    endif()
+
+    if(UA_ENABLE_AMALGAMATION)
+        add_definitions(-Wno-unused-function)
+    endif()
+
+    if(UA_VXWORKS_WRS_KERNEL)
+        # Disable flags for VXWORKS
+        remove_definitions(-Werror -Wpedantic -Wno-static-in-inline -fPIC)
+        add_definitions(-D_WRS_KERNEL)
+    endif()
 
     # Linker
     set(CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "") # cmake sets -rdynamic by default
@@ -340,7 +373,8 @@ set(default_plugin_headers ${PROJECT_SOURCE_DIR}/plugins/ua_network_tcp.h
                            ${PROJECT_SOURCE_DIR}/plugins/ua_log_stdout.h
                            ${PROJECT_SOURCE_DIR}/plugins/ua_nodestore_default.h
                            ${PROJECT_SOURCE_DIR}/plugins/ua_config_default.h
-                           ${PROJECT_SOURCE_DIR}/plugins/ua_securitypolicy_none.h)
+                           ${PROJECT_SOURCE_DIR}/plugins/ua_securitypolicy_none.h
+                           ${PROJECT_SOURCE_DIR}/plugins/ua_log_socket_error.h)
 
 set(default_plugin_sources ${PROJECT_SOURCE_DIR}/plugins/ua_network_tcp.c
                            ${PROJECT_SOURCE_DIR}/plugins/ua_clock.c
@@ -352,10 +386,6 @@ set(default_plugin_sources ${PROJECT_SOURCE_DIR}/plugins/ua_network_tcp.c
 
 if(UA_DEBUG_DUMP_PKGS)
     list(APPEND lib_sources ${PROJECT_SOURCE_DIR}/plugins/ua_debug_dump_pkgs.c)
-endif()
-
-if(UA_ENABLE_EMBEDDED_LIBC)
-  list(APPEND lib_sources ${PROJECT_SOURCE_DIR}/deps/libc_string.c)
 endif()
 
 if(UA_ENABLE_NONSTANDARD_UDP)
@@ -443,6 +473,7 @@ add_custom_command(OUTPUT ${PROJECT_BINARY_DIR}/src_generated/ua_transport_gener
                            ${PROJECT_SOURCE_DIR}/tools/schema/datatypes_transport.txt
                            ${UA_FILE_TYPES_BSD}
                            ${PROJECT_SOURCE_DIR}/tools/schema/Custom.Opc.Ua.Transport.bsd)
+
 # we need a custom target to avoid that the generator is called concurrently and thus overwriting files while the other thread is compiling
 add_custom_target(open62541-generator-transport DEPENDS
         ${PROJECT_BINARY_DIR}/src_generated/ua_transport_generated.c
@@ -487,8 +518,8 @@ add_dependencies(open62541-amalgamation-source open62541-generator-types
 
 
 set(NODESET_MAX_STR_LEN 0)
-if ( (MSVC) AND (MSVC_VERSION LESS 1600))
-    # Visual Studio 2008 has a maximum string length of 65535 bytes
+if(MSVC)
+    # Visual Studio has a maximum string length of 65535 bytes
     set(NODESET_MAX_STR_LEN 65535)
 endif()
 
@@ -513,7 +544,9 @@ add_custom_command(OUTPUT ${PROJECT_BINARY_DIR}/src_generated/ua_namespace0.c
                            ${PROJECT_SOURCE_DIR}/tools/nodeset_compiler/backend_open62541_datatypes.py)
 
 # stack protector needs to be disabled for the huge ns0 file, otherwise it may take many minutes to compile the file.
-set_source_files_properties(${PROJECT_BINARY_DIR}/src_generated/ua_namespace0.c PROPERTIES COMPILE_FLAGS -fno-stack-protector)
+if(NOT MSVC)
+    set_source_files_properties(${PROJECT_BINARY_DIR}/src_generated/ua_namespace0.c PROPERTIES COMPILE_FLAGS -fno-stack-protector)
+endif()
 
 # we need a custom target to avoid that the generator is called concurrently and thus overwriting files while the other thread is compiling
 add_custom_target(open62541-generator-namespace DEPENDS
@@ -541,8 +574,7 @@ if(UA_ENABLE_AMALGAMATION)
                      open62541-generator-types
                      open62541-generator-transport
                      open62541-generator-statuscode
-                     open62541-amalgamation-source
-                     )
+                     open62541-amalgamation-source)
 
     add_library(open62541 $<TARGET_OBJECTS:open62541-object>)
 
@@ -614,7 +646,7 @@ if(UA_BUILD_UNIT_TESTS)
     add_subdirectory(tests)
 endif()
 
-if(UA_BUILD_FUZZING OR UA_BUILD_OSS_FUZZ)
+if(UA_BUILD_FUZZING OR UA_BUILD_OSS_FUZZ OR UA_BUILD_FUZZING_CORPUS)
     # Force enable discovery, to also fuzzy-test this code
     set(UA_ENABLE_DISCOVERY ON CACHE STRING "" FORCE)
     set(UA_ENABLE_DISCOVERY_MULTICAST ON CACHE STRING "" FORCE)
@@ -651,7 +683,7 @@ add_dependencies(lint open62541)
 # specify install location with `-DCMAKE_INSTALL_PREFIX=xyz`
 # Enable shared library with `-DBUILD_SHARED_LIBS=ON`
 
-set(cmake_configfile_install ${LIB_INSTALL_DIR}/cmake3)
+set(cmake_configfile_install ${LIB_INSTALL_DIR}/cmake)
 set(target_install_dest_name "${cmake_configfile_install}/open62541Targets.cmake")
 set(open62541_tools_dir share/open62541/tools)
 set(open62541_deps_dir include/open62541/deps)
@@ -690,6 +722,7 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
     install(FILES "${PROJECT_BINARY_DIR}/src_generated/open62541.pc"
             DESTINATION ${LIB_INSTALL_DIR}/pkgconfig)
 endif()
+
 # export amalgamated header open62541.h which is generated due to build of open62541-object
 if(UA_ENABLE_AMALGAMATION)
     install(FILES ${PROJECT_BINARY_DIR}/open62541.h DESTINATION include/open62541)

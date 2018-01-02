@@ -23,6 +23,10 @@ UA_NodeId unsafe_fuzz_authenticationToken = {
 };
 #endif
 
+#ifdef UA_DEBUG_DUMP_PKGS_FILE
+void UA_debug_dumpCompleteChunk(UA_Server *const server, UA_Connection *const connection, UA_ByteString *messageBuffer);
+#endif
+
 /********************/
 /* Helper Functions */
 /********************/
@@ -43,17 +47,26 @@ sendServiceFault(UA_SecureChannel *channel, const UA_ByteString *msg,
     responseHeader->timestamp = UA_DateTime_now();
     responseHeader->serviceResult = error;
 
-    // Send error message. Message type is MSG and not ERR, since we are on a securechanenl!
+    // Send error message. Message type is MSG and not ERR, since we are on a securechannel!
     retval = UA_SecureChannel_sendSymmetricMessage(channel, requestId, UA_MESSAGETYPE_MSG,
                                                    response, responseType);
+
     UA_RequestHeader_deleteMembers(&requestHeader);
+    UA_LOG_DEBUG(channel->securityPolicy->logger, UA_LOGCATEGORY_SERVER,
+                 "Sent ServiceFault with error code %s", UA_StatusCode_name(error));
     return retval;
 }
+
+typedef enum {
+    UA_SERVICETYPE_NORMAL,
+    UA_SERVICETYPE_INSITU,
+    UA_SERVICETYPE_CUSTOM
+} UA_ServiceType;
 
 static void
 getServicePointers(UA_UInt32 requestTypeId, const UA_DataType **requestType,
                    const UA_DataType **responseType, UA_Service *service,
-                   UA_Boolean *requiresSession) {
+                   UA_Boolean *requiresSession, UA_ServiceType *serviceType) {
     switch(requestTypeId) {
     case UA_NS0ID_GETENDPOINTSREQUEST_ENCODING_DEFAULTBINARY:
         *service = (UA_Service)Service_GetEndpoints;
@@ -94,11 +107,13 @@ getServicePointers(UA_UInt32 requestTypeId, const UA_DataType **requestType,
         *requestType = &UA_TYPES[UA_TYPES_CREATESESSIONREQUEST];
         *responseType = &UA_TYPES[UA_TYPES_CREATESESSIONRESPONSE];
         *requiresSession = false;
+        *serviceType = UA_SERVICETYPE_CUSTOM;
         break;
     case UA_NS0ID_ACTIVATESESSIONREQUEST_ENCODING_DEFAULTBINARY:
         *service = (UA_Service)Service_ActivateSession;
         *requestType = &UA_TYPES[UA_TYPES_ACTIVATESESSIONREQUEST];
         *responseType = &UA_TYPES[UA_TYPES_ACTIVATESESSIONRESPONSE];
+        *serviceType = UA_SERVICETYPE_CUSTOM;
         break;
     case UA_NS0ID_CLOSESESSIONREQUEST_ENCODING_DEFAULTBINARY:
         *service = (UA_Service)Service_CloseSession;
@@ -109,6 +124,7 @@ getServicePointers(UA_UInt32 requestTypeId, const UA_DataType **requestType,
         *service = (UA_Service)Service_Read;
         *requestType = &UA_TYPES[UA_TYPES_READREQUEST];
         *responseType = &UA_TYPES[UA_TYPES_READRESPONSE];
+        *serviceType = UA_SERVICETYPE_INSITU;
         break;
     case UA_NS0ID_WRITEREQUEST_ENCODING_DEFAULTBINARY:
         *service = (UA_Service)Service_Write;
@@ -286,8 +302,18 @@ processHEL(UA_Server *server, UA_Connection *connection,
     /* Encode and send the response */
     UA_Byte *bufPos = ack_msg.data;
     const UA_Byte *bufEnd = &ack_msg.data[ack_msg.length];
-    UA_TcpMessageHeader_encodeBinary(&ackHeader, &bufPos, &bufEnd);
-    UA_TcpAcknowledgeMessage_encodeBinary(&ackMessage, &bufPos, &bufEnd);
+
+    retval = UA_TcpMessageHeader_encodeBinary(&ackHeader, &bufPos, &bufEnd);
+    if(retval != UA_STATUSCODE_GOOD) {
+        connection->releaseSendBuffer(connection, &ack_msg);
+        return retval;
+    }
+
+    retval = UA_TcpAcknowledgeMessage_encodeBinary(&ackMessage, &bufPos, &bufEnd);
+    if(retval != UA_STATUSCODE_GOOD) {
+        connection->releaseSendBuffer(connection, &ack_msg);
+        return retval;
+    }
     ack_msg.length = ackHeader.messageSize;
     return connection->send(connection, &ack_msg);
 }
@@ -304,7 +330,7 @@ processOPN(UA_Server *server, UA_SecureChannel *channel,
     retval |= UA_NodeId_decodeBinary(msg, &offset, &requestType);
     retval |= UA_OpenSecureChannelRequest_decodeBinary(msg, &offset, &openSecureChannelRequest);
 
-    /* Error occured */
+    /* Error occurred */
     if(retval != UA_STATUSCODE_GOOD ||
        requestType.identifier.numeric != UA_TYPES[UA_TYPES_OPENSECURECHANNELREQUEST].binaryEncodingId) {
         UA_NodeId_deleteMembers(&requestType);
@@ -314,7 +340,7 @@ processOPN(UA_Server *server, UA_SecureChannel *channel,
         UA_SecureChannelManager_close(&server->secureChannelManager, channel->securityToken.channelId);
         return retval;
     }
-	UA_NodeId_deleteMembers(&requestType);
+    UA_NodeId_deleteMembers(&requestType);
 
     /* Call the service */
     UA_OpenSecureChannelResponse openScResponse;
@@ -365,8 +391,9 @@ processMSG(UA_Server *server, UA_SecureChannel *channel,
     const UA_DataType *requestType = NULL;
     const UA_DataType *responseType = NULL;
     UA_Boolean sessionRequired = true;
+    UA_ServiceType serviceType = UA_SERVICETYPE_NORMAL;
     getServicePointers(requestTypeId.identifier.numeric, &requestType,
-                       &responseType, &service, &sessionRequired);
+                       &responseType, &service, &sessionRequired, &serviceType);
     if(!requestType) {
         if(requestTypeId.identifier.numeric == 787) {
             UA_LOG_INFO_CHANNEL(server->config.logger, channel,
@@ -405,23 +432,23 @@ processMSG(UA_Server *server, UA_SecureChannel *channel,
             (const UA_CreateSessionRequest *)request,
                               (UA_CreateSessionResponse *)response);
         #ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
-		// store the authentication token and session ID so we can help fuzzing by setting
+        // store the authentication token and session ID so we can help fuzzing by setting
         // these values in the next request automatically
         UA_CreateSessionResponse *res = (UA_CreateSessionResponse *)response;
         UA_NodeId_copy(&res->authenticationToken, &unsafe_fuzz_authenticationToken);
-		#endif
+        #endif
         goto send_response;
     }
 
     #ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
-	// set the authenticationToken from the create session request to help fuzzing cover more lines
+    // set the authenticationToken from the create session request to help fuzzing cover more lines
     if (!UA_NodeId_isNull(&unsafe_fuzz_authenticationToken))
         UA_NodeId_copy(&unsafe_fuzz_authenticationToken, &requestHeader->authenticationToken);
     #endif
 
     /* Find the matching session */
     session = UA_SecureChannel_getSession(channel, &requestHeader->authenticationToken);
-    if(!session)
+    if(!session && !UA_NodeId_isNull(&requestHeader->authenticationToken))
         session = UA_SessionManager_getSessionByToken(&server->sessionManager,
                                                       &requestHeader->authenticationToken);
 
@@ -444,13 +471,14 @@ processMSG(UA_Server *server, UA_SecureChannel *channel,
     UA_Session anonymousSession;
     if(!session) {
         if(sessionRequired) {
-            UA_LOG_INFO_CHANNEL(server->config.logger, channel,
-                                "Service request %i without a valid session",
-                                requestType->binaryEncodingId);
+            UA_LOG_WARNING_CHANNEL(server->config.logger, channel,
+                                   "Service request %i without a valid session",
+                                   requestType->binaryEncodingId);
             UA_deleteMembers(request, requestType);
             return sendServiceFault(channel, msg, requestPos, responseType,
                                     requestId, UA_STATUSCODE_BADSESSIONIDINVALID);
         }
+
         UA_Session_init(&anonymousSession);
         anonymousSession.sessionId = UA_NODEID_GUID(0, UA_GUID_NULL);
         anonymousSession.channel = channel;
@@ -459,9 +487,9 @@ processMSG(UA_Server *server, UA_SecureChannel *channel,
 
     /* Trying to use a non-activated session? */
     if(sessionRequired && !session->activated) {
-        UA_LOG_INFO_SESSION(server->config.logger, session,
-                            "Calling service %i on a non-activated session",
-                            requestType->binaryEncodingId);
+        UA_LOG_WARNING_SESSION(server->config.logger, session,
+                               "Calling service %i on a non-activated session",
+                               requestType->binaryEncodingId);
         UA_SessionManager_removeSession(&server->sessionManager,
                                         &session->authenticationToken);
         UA_deleteMembers(request, requestType);
@@ -470,12 +498,13 @@ processMSG(UA_Server *server, UA_SecureChannel *channel,
     }
 
     /* The session is bound to another channel */
-    if(session->channel != channel) {
-        UA_LOG_DEBUG_CHANNEL(server->config.logger, channel,
-                             "Client tries to use an obsolete securechannel");
+    if(session != &anonymousSession && session->channel != channel) {
+        UA_LOG_WARNING_CHANNEL(server->config.logger, channel,
+                               "Client tries to use a Session that is not "
+                               "bound to this SecureChannel");
         UA_deleteMembers(request, requestType);
         return sendServiceFault(channel, msg, requestPos, responseType,
-                                requestId, UA_STATUSCODE_BADSECURECHANNELIDINVALID);
+                                requestId, UA_STATUSCODE_BADSESSIONNOTACTIVATED);
     }
 
     /* Update the session lifetime */
@@ -491,26 +520,59 @@ processMSG(UA_Server *server, UA_SecureChannel *channel,
     }
 #endif
 
-    /* Call the service */
-    UA_assert(service); /* For all services besides publish, the service pointer is non-NULL*/
-    service(server, session, request, response);
+    send_response:
 
-send_response:
-    /* Send the response */
+    /* Prepare the ResponseHeader */
     ((UA_ResponseHeader*)response)->requestHandle = requestHeader->requestHandle;
     ((UA_ResponseHeader*)response)->timestamp = UA_DateTime_now();
-    retval = UA_SecureChannel_sendSymmetricMessage(channel, requestId, UA_MESSAGETYPE_MSG,
-                                                   response, responseType);
 
+    /* Start the message */
+    UA_NodeId typeId = UA_NODEID_NUMERIC(0, responseType->binaryEncodingId);
+    UA_MessageContext mc;
+    retval = UA_MessageContext_begin(&mc, channel, requestId, UA_MESSAGETYPE_MSG);
+    if(retval != UA_STATUSCODE_GOOD)
+        goto cleanup;
+
+    /* Assert's required for clang-analyzer */
+    UA_assert(mc.buf_pos == &mc.messageBuffer.data[UA_SECURE_MESSAGE_HEADER_LENGTH]);
+    UA_assert(mc.buf_end == &mc.messageBuffer.data[mc.messageBuffer.length]);
+
+    retval = UA_MessageContext_encode(&mc, &typeId, &UA_TYPES[UA_TYPES_NODEID]);
+    if(retval != UA_STATUSCODE_GOOD)
+        goto cleanup;
+
+    switch(serviceType) {
+    case UA_SERVICETYPE_CUSTOM:
+        /* Was processed before...*/
+        retval = UA_MessageContext_encode(&mc, response, responseType);
+        break;
+    case UA_SERVICETYPE_INSITU: 
+        retval = ((UA_InSituService)service)
+            (server, session, &mc, request, (UA_ResponseHeader*)response);
+        break;
+    case UA_SERVICETYPE_NORMAL:
+    default:
+        service(server, session, request, response);
+        retval = UA_MessageContext_encode(&mc, response, responseType);
+        break;
+    }
+
+    /* Finish sending the message */
+    if(retval != UA_STATUSCODE_GOOD) {
+        UA_MessageContext_abort(&mc);
+        goto cleanup;
+    }
+
+    retval = UA_MessageContext_finish(&mc);
+
+ cleanup:
     if(retval != UA_STATUSCODE_GOOD)
         UA_LOG_INFO_CHANNEL(server->config.logger, channel,
                             "Could not send the message over the SecureChannel "
                             "with StatusCode %s", UA_StatusCode_name(retval));
-
     /* Clean up */
     UA_deleteMembers(request, requestType);
     UA_deleteMembers(response, responseType);
-
     return retval;
 }
 
@@ -645,6 +707,9 @@ processCompleteChunk(void *const application,
                      UA_Connection *const connection,
                      UA_ByteString *const chunk) {
     UA_Server *const server = (UA_Server*)application;
+#ifdef UA_DEBUG_DUMP_PKGS_FILE
+    UA_debug_dumpCompleteChunk(server, connection, chunk);
+#endif
     if(!connection->channel)
         return processCompleteChunkWithoutChannel(server, connection, chunk);
     return UA_SecureChannel_processChunk(connection->channel, chunk,

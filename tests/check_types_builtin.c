@@ -414,7 +414,7 @@ START_TEST(UA_Variant_decodeWithOutArrayFlagSetShallSetVTAndAllocateMemoryForArr
     ck_assert_int_eq((uintptr_t)dst.type, (uintptr_t)&UA_TYPES[UA_TYPES_INT32]); 
     ck_assert_int_eq(dst.arrayLength, 0);
     ck_assert_int_ne((uintptr_t)dst.data, 0);
-    assert(dst.data != NULL); /* repeat the previous argument so that clang-analyzer is happy */
+    UA_assert(dst.data != NULL); /* repeat the previous argument so that clang-analyzer is happy */
     ck_assert_int_eq(*(UA_Int32 *)dst.data, 255);
     // finally
     UA_Variant_deleteMembers(&dst);
@@ -804,12 +804,16 @@ START_TEST(UA_Float_encodeShallWorkOnExample) {
         {0x00, 0x00, 0xD0, 0xC0}, // -6.5
         {0x00, 0x00, 0x00, 0x00}, // 0.0
         {0x00, 0x00, 0x00, 0x80}, // -0.0
-        {0x00, 0x00, 0xC0, 0xFF}, // NAN
+        {0x00, 0x00, 0xC0, 0xFF}, // -NAN
         {0xFF, 0xFF, 0x7F, 0x7F}, // FLT_MAX
         {0x00, 0x00, 0x80, 0x00}, // FLT_MIN
         {0x00, 0x00, 0x80, 0x7F}, // INF
         {0x00, 0x00, 0x80, 0xFF} // -INF
     };
+#ifdef _WIN32
+    // on WIN32 -NAN is encoded differently
+    result[4][3] = 127;
+#endif
 
     UA_Byte data[] = {0x55, 0x55, 0x55,  0x55};
     UA_ByteString dst = {4, data};
@@ -989,26 +993,6 @@ START_TEST(UA_DateTime_toStructShallWorkOnExample) {
     ck_assert_int_eq(dst.day, 14);
     ck_assert_int_eq(dst.month, 4);
     ck_assert_int_eq(dst.year, 2014);
-}
-END_TEST
-
-START_TEST(UA_DateTime_toStringShallWorkOnExample) {
-    // given
-    UA_DateTime src = 13974671891234567 + (11644473600 * 10000000); // ua counts since 1601, unix since 1970
-    //1397467189... is Mon, 14 Apr 2014 09:19:49 GMT
-    //...1234567 are the milli-, micro- and nanoseconds
-
-    UA_String dst;
-
-    // when
-    dst = UA_DateTime_toString(src);
-    // then
-    ck_assert_int_eq(dst.data[0], '0');
-    ck_assert_int_eq(dst.data[1], '4');
-    ck_assert_int_eq(dst.data[2], '/');
-    ck_assert_int_eq(dst.data[3], '1');
-    ck_assert_int_eq(dst.data[4], '4');
-    UA_String_deleteMembers(&dst);
 }
 END_TEST
 
@@ -1522,7 +1506,6 @@ static Suite *testSuite_builtin(void) {
 
     TCase *tc_convert = tcase_create("convert");
     tcase_add_test(tc_convert, UA_DateTime_toStructShallWorkOnExample);
-    tcase_add_test(tc_convert, UA_DateTime_toStringShallWorkOnExample);
     suite_add_tcase(s, tc_convert);
 
     TCase *tc_copy = tcase_create("copy");

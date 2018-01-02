@@ -258,7 +258,8 @@ processDelayedCallback(UA_Server *server, WorkerCallback *dc) {
 /**
  * Main Server Loop
  * ----------------
- * Start: Spin up the workers and the network layer
+ * Start: Spin up the workers and the network layer and sample the server's
+ *        start time.
  * Iterate: Process repeated callbacks and events in the network layer.
  *          This part can be driven from an external main-loop in an
  *          event-driven single-threaded architecture.
@@ -267,11 +268,21 @@ processDelayedCallback(UA_Server *server, WorkerCallback *dc) {
 
 UA_StatusCode
 UA_Server_run_startup(UA_Server *server) {
-    /* Start the networklayers */
+    UA_Variant var;
     UA_StatusCode result = UA_STATUSCODE_GOOD;
+
+    /* Sample the start time and set it to the Server object */
+    server->startTime = UA_DateTime_now();
+    UA_Variant_init(&var);
+    UA_Variant_setScalar(&var, &server->startTime, &UA_TYPES[UA_TYPES_DATETIME]);
+    UA_Server_writeValue(server,
+                         UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERSTATUS_STARTTIME),
+                         var);
+
+    /* Start the networklayers */
     for(size_t i = 0; i < server->config.networkLayersSize; ++i) {
         UA_ServerNetworkLayer *nl = &server->config.networkLayers[i];
-        result |= nl->start(nl);
+        result |= nl->start(nl, &server->config.customHostname);
     }
 
     /* Spin up the worker threads */
@@ -310,13 +321,16 @@ UA_Server_run_iterate(UA_Server *server, UA_Boolean waitInternal) {
         UA_Timer_process(&server->timer, now,
                          (UA_TimerDispatchCallback)UA_Server_workerCallback,
                          server);
-    UA_DateTime latest = now + (UA_MAXTIMEOUT * UA_MSEC_TO_DATETIME);
+    UA_DateTime latest = now + (UA_MAXTIMEOUT * UA_DATETIME_MSEC);
     if(nextRepeated > latest)
         nextRepeated = latest;
 
     UA_UInt16 timeout = 0;
+
+    /* round always to upper value to avoid timeout to be set to 0
+    * if (nextRepeated - now) < (UA_DATETIME_MSEC/2) */
     if(waitInternal)
-        timeout = (UA_UInt16)((nextRepeated - now) / UA_MSEC_TO_DATETIME);
+        timeout = (UA_UInt16)(((nextRepeated - now) + (UA_DATETIME_MSEC - 1)) / UA_DATETIME_MSEC);
 
     /* Listen on the networklayer */
     for(size_t i = 0; i < server->config.networkLayersSize; ++i) {
@@ -339,8 +353,7 @@ UA_Server_run_iterate(UA_Server *server, UA_Boolean waitInternal) {
         // server->mdnsSocket (see example in mdnsd library) on higher level.
         UA_DateTime multicastNextRepeat = 0;
         UA_StatusCode hasNext =
-            iterateMulticastDiscoveryServer(server, &multicastNextRepeat,
-                                            UA_TRUE);
+            iterateMulticastDiscoveryServer(server, &multicastNextRepeat, UA_TRUE);
         if(hasNext == UA_STATUSCODE_GOOD && multicastNextRepeat < nextRepeated)
             nextRepeated = multicastNextRepeat;
     }
@@ -349,7 +362,7 @@ UA_Server_run_iterate(UA_Server *server, UA_Boolean waitInternal) {
     now = UA_DateTime_nowMonotonic();
     timeout = 0;
     if(nextRepeated > now)
-        timeout = (UA_UInt16)((nextRepeated - now) / UA_MSEC_TO_DATETIME);
+        timeout = (UA_UInt16)((nextRepeated - now) / UA_DATETIME_MSEC);
     return timeout;
 }
 

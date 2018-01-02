@@ -133,7 +133,16 @@ void Service_FindServers(UA_Server *server, UA_Session *session,
                 registeredServer_list_entry* current;
                 LIST_FOREACH(current, &server->registeredServers, pointers) {
                     if(UA_String_equal(&current->registeredServer.serverUri, &request->serverUris[i])) {
-                        foundServerFilteredPointer[foundServersSize++] = &current->registeredServer;
+                        // check if entry already in list:
+                        UA_Boolean existing = false;
+                        for (size_t j=0; j<foundServersSize; j++) {
+                            if (UA_String_equal(&foundServerFilteredPointer[j]->serverUri, &request->serverUris[i])) {
+                                existing = true;
+                                break;
+                            }
+                        }
+                        if (!existing)
+                            foundServerFilteredPointer[foundServersSize++] = &current->registeredServer;
                         break;
                     }
                 }
@@ -512,7 +521,7 @@ void UA_Discovery_cleanupTimedOut(UA_Server *server, UA_DateTime nowMonotonic) {
     // registration is timed out if lastSeen is older than 60 minutes (default
     // value, can be modified by user).
     if(server->config.discoveryCleanupTimeout)
-        timedOut -= server->config.discoveryCleanupTimeout*UA_SEC_TO_DATETIME;
+        timedOut -= server->config.discoveryCleanupTimeout*UA_DATETIME_SEC;
 
     registeredServer_list_entry* current, *temp;
     LIST_FOREACH_SAFE(current, &server->registeredServers, pointers, temp) {
