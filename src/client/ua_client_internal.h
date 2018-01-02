@@ -111,4 +111,9 @@ UA_StatusCode
 UA_Client_getEndpointsInternal(UA_Client *client, size_t* endpointDescriptionsSize,
                                UA_EndpointDescription** endpointDescriptions);
 
+#if defined UA_ENABLE_SUBSCRIPTIONS && defined UA_ENABLE_ASYNC_CLIENT_API
+/* Needed by ua_client_async.c */
+void UA_Client_processPublishResponse(UA_Client *client, UA_PublishRequest *request, UA_PublishResponse *response);
+#endif
+
 #endif /* UA_CLIENT_INTERNAL_H_ */

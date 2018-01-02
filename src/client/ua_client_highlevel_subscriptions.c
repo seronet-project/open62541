@@ -306,7 +306,7 @@ UA_Client_Subscriptions_removeMonitoredItem(UA_Client *client, UA_UInt32 subscri
     return UA_STATUSCODE_GOOD;
 }
 
-static void
+void
 UA_Client_processPublishResponse(UA_Client *client, UA_PublishRequest *request,
                                  UA_PublishResponse *response) {
     if(response->responseHeader.serviceResult != UA_STATUSCODE_GOOD)

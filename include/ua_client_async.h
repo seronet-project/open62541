@@ -61,6 +61,10 @@ UA_Client_AsyncService_publish(UA_Client *client, const UA_PublishRequest reques
 						&UA_TYPES[UA_TYPES_PUBLISHRESPONSE], userdata,
 						requestId);
 }
+
+UA_StatusCode
+UA_Client_Subscriptions_manuallySendPublishRequest_Async(UA_Client *client);
+
 #endif
 
 #endif /* UA_ENABLE_ASYNC_CLIENT_API */
