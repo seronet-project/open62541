@@ -92,7 +92,7 @@ int main(int argc, char *argv[]) {
 		retVal = UA_Client_AsyncService_write(client, wReq, valueWritten, NULL, &reqId);
 		retVal = UA_Client_AsyncService_read(client, rReq, valueRead, NULL, &reqId);
 		retVal = UA_Client_AsyncService_call(client, callRequ, methodCalled, NULL, &reqId);
-		printf("Requests Send \n");
+		printf("Requests Send %d \n", retVal);
 		UA_Client_runAsync(client, 1500);
     }
 

@@ -12,11 +12,12 @@
 
 
 #ifdef UA_ENABLE_SUBSCRIPTIONS
+void callback_PublishResponce(UA_Client *client, void *userdata, UA_UInt32 requestId, const void *response);
 
 void callback_PublishResponce(UA_Client *client, void *userdata,
     UA_UInt32 requestId, const void *response)
 {
-    UA_PublishResponse* resp = (UA_PublishResponse*)response;
+    const UA_PublishResponse* resp = (const UA_PublishResponse*)response;
     UA_PublishRequest* requ = (UA_PublishRequest*)userdata;
     UA_Client_processPublishResponse(client, requ, resp);
     

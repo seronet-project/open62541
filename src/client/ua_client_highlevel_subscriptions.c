@@ -309,7 +309,7 @@ UA_Client_Subscriptions_removeMonitoredItem(UA_Client *client, UA_UInt32 subscri
 
 void
 UA_Client_processPublishResponse(UA_Client *client, UA_PublishRequest *request,
-                                 UA_PublishResponse *response) {
+                                 const UA_PublishResponse *response) {
     if(response->responseHeader.serviceResult != UA_STATUSCODE_GOOD)
         return;
 
@@ -339,7 +339,7 @@ UA_Client_processPublishResponse(UA_Client *client, UA_PublishRequest *request,
     }
 
     /* Process the notification messages */
-    UA_NotificationMessage *msg = &response->notificationMessage;
+    const UA_NotificationMessage *msg = &response->notificationMessage;
     for(size_t k = 0; k < msg->notificationDataSize; ++k) {
         if(msg->notificationData[k].encoding != UA_EXTENSIONOBJECT_DECODED)
             continue;

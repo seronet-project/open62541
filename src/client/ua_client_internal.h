@@ -113,7 +113,7 @@ UA_Client_getEndpointsInternal(UA_Client *client, size_t* endpointDescriptionsSi
 
 #if defined UA_ENABLE_SUBSCRIPTIONS && defined UA_ENABLE_ASYNC_CLIENT_API
 /* Needed by ua_client_async.c */
-void UA_Client_processPublishResponse(UA_Client *client, UA_PublishRequest *request, UA_PublishResponse *response);
+void UA_Client_processPublishResponse(UA_Client *client, UA_PublishRequest *request, const UA_PublishResponse *response);
 #endif
 
 /* Receive and process messages until a synchronous message arrives or the
