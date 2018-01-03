@@ -475,54 +475,54 @@ sendSymmetricChunk(UA_MessageContext *mc) {
     UA_SecureChannel *const channel = mc->channel;
     const UA_SecurityPolicy *securityPolicy = channel->securityPolicy;
     UA_Connection *const connection = channel->connection;
-    if(!connection)
+    if (!connection)
         return UA_STATUSCODE_BADINTERNALERROR;
 
     /* Will this chunk surpass the capacity of the SecureChannel for the message? */
     UA_Byte *buf_body_start = mc->messageBuffer.data + UA_SECURE_MESSAGE_HEADER_LENGTH;
     const UA_Byte *buf_body_end = mc->buf_pos;
-    size_t bodyLength = (uintptr_t) buf_body_end - (uintptr_t) buf_body_start;
+    size_t bodyLength = (uintptr_t)buf_body_end - (uintptr_t)buf_body_start;
     mc->messageSizeSoFar += bodyLength;
     mc->chunksSoFar++;
-    if(mc->messageSizeSoFar > connection->remoteConf.maxMessageSize &&
-       connection->remoteConf.maxMessageSize != 0)
+    if (mc->messageSizeSoFar > connection->remoteConf.maxMessageSize &&
+        connection->remoteConf.maxMessageSize != 0)
         res = UA_STATUSCODE_BADRESPONSETOOLARGE;
-    if(mc->chunksSoFar > connection->remoteConf.maxChunkCount &&
-       connection->remoteConf.maxChunkCount != 0)
+    if (mc->chunksSoFar > connection->remoteConf.maxChunkCount &&
+        connection->remoteConf.maxChunkCount != 0)
         res = UA_STATUSCODE_BADRESPONSETOOLARGE;
-    if(res != UA_STATUSCODE_GOOD) {
+    if (res != UA_STATUSCODE_GOOD) {
         connection->releaseSendBuffer(channel->connection, &mc->messageBuffer);
         return res;
     }
 
     /* Pad the message. The bytes for the padding and signature were removed
      * from buf_end before encoding the payload. So we don't check here. */
-    if(channel->securityMode == UA_MESSAGESECURITYMODE_SIGNANDENCRYPT) {
+    if (channel->securityMode == UA_MESSAGESECURITYMODE_SIGNANDENCRYPT) {
         size_t bytesToWrite = bodyLength + UA_SEQUENCE_HEADER_LENGTH;
         UA_Byte paddingSize = 0;
         UA_Byte extraPaddingSize = 0;
         UA_UInt16 totalPaddingSize =
             calculatePaddingSym(securityPolicy, channel->channelContext,
-                                bytesToWrite, &paddingSize, &extraPaddingSize);
+                bytesToWrite, &paddingSize, &extraPaddingSize);
 
         // This is <= because the paddingSize byte also has to be written.
-        for(UA_UInt16 i = 0; i <= totalPaddingSize; ++i) {
+        for (UA_UInt16 i = 0; i <= totalPaddingSize; ++i) {
             *mc->buf_pos = paddingSize;
             ++(mc->buf_pos);
         }
-        if(extraPaddingSize > 0) {
+        if (extraPaddingSize > 0) {
             *mc->buf_pos = extraPaddingSize;
             ++(mc->buf_pos);
         }
     }
 
     /* The total message length */
-    size_t pre_sig_length = (uintptr_t) (mc->buf_pos) - (uintptr_t) mc->messageBuffer.data;
+    size_t pre_sig_length = (uintptr_t)(mc->buf_pos) - (uintptr_t)mc->messageBuffer.data;
     size_t total_length = pre_sig_length;
-    if(channel->securityMode == UA_MESSAGESECURITYMODE_SIGN ||
-       channel->securityMode == UA_MESSAGESECURITYMODE_SIGNANDENCRYPT)
+    if (channel->securityMode == UA_MESSAGESECURITYMODE_SIGN ||
+        channel->securityMode == UA_MESSAGESECURITYMODE_SIGNANDENCRYPT)
         total_length += securityPolicy->symmetricModule.cryptoModule.
-            getLocalSignatureSize(securityPolicy, channel->channelContext);
+        getLocalSignatureSize(securityPolicy, channel->channelContext);
     mc->messageBuffer.length = total_length; /* For giving the buffer to the network layer */
 
     /* Encode the chunk headers at the beginning of the buffer */
@@ -532,28 +532,28 @@ sendSymmetricChunk(UA_MessageContext *mc) {
     respHeader.secureChannelId = channel->securityToken.channelId;
     respHeader.messageHeader.messageTypeAndChunkType = mc->messageType;
     respHeader.messageHeader.messageSize = (UA_UInt32)total_length;
-    if(mc->final)
+    if (mc->final)
         respHeader.messageHeader.messageTypeAndChunkType += UA_CHUNKTYPE_FINAL;
     else
         respHeader.messageHeader.messageTypeAndChunkType += UA_CHUNKTYPE_INTERMEDIATE;
     res = UA_encodeBinary(&respHeader, &UA_TRANSPORT[UA_TRANSPORT_SECURECONVERSATIONMESSAGEHEADER],
-                          &header_pos, &mc->buf_end, NULL, NULL);
+        &header_pos, &mc->buf_end, NULL, NULL);
 
     UA_SymmetricAlgorithmSecurityHeader symSecHeader;
     symSecHeader.tokenId = channel->securityToken.tokenId;
     res |= UA_encodeBinary(&symSecHeader.tokenId,
-                           &UA_TRANSPORT[UA_TRANSPORT_SYMMETRICALGORITHMSECURITYHEADER],
-                           &header_pos, &mc->buf_end, NULL, NULL);
+        &UA_TRANSPORT[UA_TRANSPORT_SYMMETRICALGORITHMSECURITYHEADER],
+        &header_pos, &mc->buf_end, NULL, NULL);
 
     UA_SequenceHeader seqHeader;
     seqHeader.requestId = mc->requestId;
     seqHeader.sequenceNumber = UA_atomic_add(&channel->sendSequenceNumber, 1);
     res |= UA_encodeBinary(&seqHeader, &UA_TRANSPORT[UA_TRANSPORT_SEQUENCEHEADER],
-                           &header_pos, &mc->buf_end, NULL, NULL);
+        &header_pos, &mc->buf_end, NULL, NULL);
 
     /* Sign message */
-    if(channel->securityMode == UA_MESSAGESECURITYMODE_SIGN ||
-       channel->securityMode == UA_MESSAGESECURITYMODE_SIGNANDENCRYPT) {
+    if (channel->securityMode == UA_MESSAGESECURITYMODE_SIGN ||
+        channel->securityMode == UA_MESSAGESECURITYMODE_SIGNANDENCRYPT) {
         UA_ByteString dataToSign = mc->messageBuffer;
         dataToSign.length = pre_sig_length;
         UA_ByteString signature;
@@ -565,7 +565,7 @@ sendSymmetricChunk(UA_MessageContext *mc) {
     }
 
     /* Encrypt message */
-    if(channel->securityMode == UA_MESSAGESECURITYMODE_SIGNANDENCRYPT) {
+    if (channel->securityMode == UA_MESSAGESECURITYMODE_SIGNANDENCRYPT) {
         UA_ByteString dataToEncrypt;
         dataToEncrypt.data = mc->messageBuffer.data + UA_SECUREMH_AND_SYMALGH_LENGTH;
         dataToEncrypt.length = total_length - UA_SECUREMH_AND_SYMALGH_LENGTH;
@@ -573,22 +573,14 @@ sendSymmetricChunk(UA_MessageContext *mc) {
             encrypt(securityPolicy, channel->channelContext, &dataToEncrypt);
     }
 
-    if(res != UA_STATUSCODE_GOOD) {
+    if (res != UA_STATUSCODE_GOOD) {
         connection->releaseSendBuffer(channel->connection, &mc->messageBuffer);
         return res;
     }
 
     /* Send the chunk, the buffer is freed in the network layer */
-    ci->messageBuffer.length = respHeader.messageHeader.messageSize;
-    ci->errorCode = connection->send(channel->connection, &ci->messageBuffer);
-
-    /* Replace with the buffer for the next chunk */
-    if(!ci->final && ci->errorCode == UA_STATUSCODE_GOOD) {
-        UA_StatusCode retval =
-            connection->getSendBuffer(connection, connection->localConf.sendBufferSize,
-                                      &ci->messageBuffer);
-        if(retval != UA_STATUSCODE_GOOD)
-            return retval;
+    return connection->send(channel->connection, &mc->messageBuffer);
+}
 
 /* Callback from the encoding layer. Send the chunk and replace the buffer. */
 static UA_StatusCode
