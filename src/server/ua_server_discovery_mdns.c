@@ -476,13 +476,16 @@ setSrv(UA_Server *server, const struct resource *r,
     char *newUrl;
     if (hostnameEntry) {
         char remote_name[NI_MAXHOST];
-        struct sockaddr_in sockaddr;
+		int res = 11001;
+        /*struct sockaddr_in sockaddr;
         sockaddr.sin_family = AF_INET;
         sockaddr.sin_addr = hostnameEntry->addr;
+		UA_LOG_DEBUG(&server->config.logger, UA_LOGCATEGORY_SERVER, "Before getnameinfo");
         int res = getnameinfo((struct sockaddr*)&sockaddr,
                               sizeof(struct sockaddr_storage),
                               remote_name, sizeof(remote_name),
                               NULL, 0, NI_NAMEREQD);
+        UA_LOG_DEBUG(&server->config.logger, UA_LOGCATEGORY_SERVER, "After getnameinfo");*/
         newUrl = (char*)UA_malloc(10 + NI_MAXHOST + 8);
         if (!newUrl)
             return; /* TODO show error message */
